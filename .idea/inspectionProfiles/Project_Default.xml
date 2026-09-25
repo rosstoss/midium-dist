@@ -1,0 +1,32 @@
+<component name="InspectionProjectProfileManager">
+  <profile version="1.0">
+    <option name="myName" value="Project Default" />
+    <inspection_tool class="PyPackageRequirementsInspection" enabled="false" level="WARNING" enabled_by_default="false">
+      <option name="ignoredPackages">
+        <list>
+          <option value="protobuf" />
+          <option value="Django" />
+          <option value="djangorestframework" />
+          <option value="django-rest-knox" />
+          <option value="psycopg2-binary" />
+          <option value="django-environ" />
+          <option value="google-cloud-secret-manager" />
+          <option value="whitenoise" />
+          <option value="gunicorn" />
+          <option value="django-cors-headers" />
+          <option value="PyMuPDF" />
+          <option value="requests" />
+          <option value="cryptography" />
+          <option value="sendgrid" />
+          <option value="anthropic" />
+          <option value="openai" />
+          <option value="xai-sdk" />
+          <option value="google-genai" />
+          <option value="google" />
+          <option value="google-cloud-storage" />
+          <option value="stripe" />
+        </list>
+      </option>
+    </inspection_tool>
+  </profile>
+</component>
