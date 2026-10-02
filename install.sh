@@ -189,6 +189,39 @@ step_done "System check" "Apple Silicon · macOS $MACOS_VER"
 # Move a pre-Midium ~/.courier into ~/Midium BEFORE creating anything there (the
 # engine finishes the stored-path + .env rewrites on first launch — see
 # src/midium_home.py). A symlink keeps anything pointing at the old path working.
+# A pre-Midium install (or `courier update` handing off here via courier-dist):
+# stop its engine first so nothing is writing into the folder while it moves,
+# and remember to keep the old `courier` command working afterwards.
+LEGACY_INSTALL=0
+if [ -e "$LEGACY_ROOT" ] || [ -e "$BIN_DIR/courier" ] || [ -L "$BIN_DIR/courier" ]; then
+  LEGACY_INSTALL=1
+  for old in "Courier" "Courier OS" "Enclave"; do pkill -x "$old" 2>/dev/null || true; done
+fi
+# Old desktop apps (Courier, Courier OS, Enclave) are replaced by Midium: quit
+# them and move the bundles to the Trash (recoverable, unlike rm). Their data
+# isn't touched here; it moves to ~/Midium below / on first launch.
+REMOVED_APPS=""
+for old in "Courier" "Courier OS" "Enclave"; do
+  for dir in "/Applications" "$HOME/Applications"; do
+    bundle="$dir/$old.app"
+    [ -d "$bundle" ] || continue
+    # Only ask a RUNNING app to quit — `tell application` launches one that isn't.
+    if pgrep -x "$old" >/dev/null 2>&1; then
+      osascript -e "tell application \"$old\" to quit" >/dev/null 2>&1 || true
+      sleep 1
+      pkill -x "$old" 2>/dev/null || true
+    fi
+    dest="$HOME/.Trash/$old.app"
+    [ -e "$dest" ] && dest="$HOME/.Trash/$old $(date +%Y%m%d-%H%M%S).app"
+    if mv "$bundle" "$dest" 2>/dev/null; then
+      REMOVED_APPS="${REMOVED_APPS:+$REMOVED_APPS, }$old"
+    else
+      step_fail "Old apps" "couldn't move ${bundle/#$HOME/~} to the Trash — remove it by hand"
+    fi
+  done
+done
+[ -n "$REMOVED_APPS" ] && step_done "Old apps" "moved to Trash: $REMOVED_APPS"
+
 if [ ! -e "$COURIER_ROOT" ] && [ -d "$LEGACY_ROOT" ] && [ ! -L "$LEGACY_ROOT" ]; then
   mv "$LEGACY_ROOT" "$COURIER_ROOT" && ln -s "$COURIER_ROOT" "$LEGACY_ROOT"
   step_done "Migrate" "moved ~/.courier → ~/Midium"
@@ -218,11 +251,15 @@ if ! tar -tf "$TMP_TAR" >/dev/null 2>&1; then
   rm -f "$TMP_TAR"; exit 1
 fi
 
-for old in Midium Courier; do
+for old in Midium Courier "Courier OS" Enclave; do
   if [ -f "$APP_DIR/$old" ]; then
     pkill -x "$old" 2>/dev/null || true
     rm -f "$APP_DIR/$old"
   fi
+done
+# Old command names other than `courier` (kept below as an alias for `midium`).
+for old in enclave courier-os; do
+  if [ -L "$BIN_DIR/$old" ] || [ -f "$BIN_DIR/$old" ]; then rm -f "$BIN_DIR/$old"; fi
 done
 
 # ── 4. extract ────────────────────────────────────────────────────────────────
@@ -242,6 +279,10 @@ step_done "Verify" "signed for this Mac"
 # ── 6. finalize ───────────────────────────────────────────────────────────────
 [ -L "$BIN_DIR/$BINARY_NAME" ] && rm "$BIN_DIR/$BINARY_NAME"
 ln -sf "$APP_DIR/$REAL_BINARY" "$BIN_DIR/$BINARY_NAME"
+# Upgraded from Courier: `courier` keeps working as another name for `midium`.
+if [ "$LEGACY_INSTALL" -eq 1 ]; then
+  ln -sf "$APP_DIR/$REAL_BINARY" "$BIN_DIR/courier"
+fi
 chmod +x "$APP_DIR/$REAL_BINARY"
 hash -r 2>/dev/null || true
 echo "$COURIER_VERSION" > "$COURIER_ROOT/VERSION"
@@ -249,6 +290,9 @@ step_done "Finalize" "midium v$COURIER_VERSION ready"
 
 # ── done ──────────────────────────────────────────────────────────────────────
 printf '\n  %s%s✓ Midium installed.%s\n\n' "$BOLD" "$SUCCESS" "$NC"
+if [ "$LEGACY_INSTALL" -eq 1 ]; then
+  printf '  %sCourier is now Midium. Your models, chats and settings moved to ~/Midium,\n  and `courier` still works as another name for `midium`.%s\n\n' "$MUTED" "$NC"
+fi
 printf '  %sRun:%s %s%s setup%s\n\n' "$MUTED" "$NC" "$BOLD" "$BINARY_NAME" "$NC"
 [ "$TTY" -eq 1 ] && printf '%s%s' "$RESET" "$SHOW_CUR"
 
