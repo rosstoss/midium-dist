@@ -21,7 +21,10 @@ COURIER_VERSION="$(curl -fsSL "$LATEST_RELEASE_URL" 2>/dev/null \
 [ -z "$COURIER_VERSION" ] && COURIER_VERSION="latest"
 
 DOWNLOAD_URL="https://github.com/$GITHUB_USER/$GITHUB_REPO/releases/latest/download/$ASSET_NAME"
-TMP_TAR="/tmp/midium_download.tar.gz"
+# A private temp file (a fixed /tmp path could be pre-created by another user).
+TMP_TAR="$(mktemp -t midium_download).tar.gz"
+ENGINE_PORT="${UCE_PORT:-9100}"
+ORIG_PATH="$PATH"
 
 ACCENT=$'\033[38;2;122;158;177m'
 SUCCESS=$'\033[38;2;127;174;127m'
@@ -47,7 +50,10 @@ if [ "$TTY" -eq 1 ]; then
 else
   BG=""
 fi
-cleanup() { [ "$TTY" -eq 1 ] && printf '%s%s' "$RESET" "$SHOW_CUR" 2>/dev/null || true; }
+cleanup() {
+  rm -f "$TMP_TAR" "${TMP_TAR%.tar.gz}" 2>/dev/null || true
+  [ "$TTY" -eq 1 ] && printf '%s%s' "$RESET" "$SHOW_CUR" 2>/dev/null || true
+}
 trap cleanup EXIT INT TERM
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -186,20 +192,24 @@ fi
 step_done "System check" "Apple Silicon · macOS $MACOS_VER"
 
 # ── 2. home folder + PATH ─────────────────────────────────────────────────────
-# Move a pre-Midium ~/.courier into ~/Midium BEFORE creating anything there (the
-# engine finishes the stored-path + .env rewrites on first launch — see
-# src/midium_home.py). A symlink keeps anything pointing at the old path working.
-# A pre-Midium install (or `courier update` handing off here via courier-dist):
-# stop its engine first so nothing is writing into the folder while it moves,
-# and remember to keep the old `courier` command working afterwards.
+ENGINE_WAS_RUNNING=0
+ENGINE_PID="$(lsof -nP -iTCP:"$ENGINE_PORT" -sTCP:LISTEN -t 2>/dev/null | head -1)"
+ENGINE_EXE=""
+if [ -n "$ENGINE_PID" ]; then
+  ENGINE_EXE="$(lsof -a -p "$ENGINE_PID" -d txt -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)"
+  if [[ "$ENGINE_EXE" == "$APP_DIR/"* ]] || [[ "$ENGINE_EXE" == "$LEGACY_ROOT/app/"* ]]; then
+    ENGINE_WAS_RUNNING=1
+  fi
+fi
+
 LEGACY_INSTALL=0
-if [ -e "$LEGACY_ROOT" ] || [ -e "$BIN_DIR/courier" ] || [ -L "$BIN_DIR/courier" ]; then
+if { [ -d "$LEGACY_ROOT" ] && [ ! -L "$LEGACY_ROOT" ]; } \
+   || [ -f "$APP_DIR/Courier" ] || [ -f "$APP_DIR/Courier OS" ]; then
   LEGACY_INSTALL=1
   for old in "Courier" "Courier OS" "Enclave"; do pkill -x "$old" 2>/dev/null || true; done
 fi
-# Old desktop apps (Courier, Courier OS, Enclave) are replaced by Midium: quit
-# them and move the bundles to the Trash (recoverable, unlike rm). Their data
-# isn't touched here; it moves to ~/Midium below / on first launch.
+KEEP_COURIER_ALIAS=$LEGACY_INSTALL
+{ [ -e "$BIN_DIR/courier" ] || [ -L "$BIN_DIR/courier" ]; } && KEEP_COURIER_ALIAS=1
 REMOVED_APPS=""
 for old in "Courier" "Courier OS" "Enclave"; do
   for dir in "/Applications" "$HOME/Applications"; do
@@ -228,12 +238,21 @@ if [ ! -e "$COURIER_ROOT" ] && [ -d "$LEGACY_ROOT" ] && [ ! -L "$LEGACY_ROOT" ];
 fi
 mkdir -p "$APP_DIR" "$BIN_DIR"
 export PATH="$BIN_DIR:$PATH"
-SHELL_CONFIG="$HOME/.zshrc"
-if [[ "$SHELL" == *"bash"* ]]; then SHELL_CONFIG="$HOME/.bash_profile"; fi
-[ -f "$SHELL_CONFIG" ] || touch "$SHELL_CONFIG"
-if ! grep -q "$BIN_DIR" "$SHELL_CONFIG" 2>/dev/null; then
-  printf "\n# Midium\nexport PATH=\"%s:\$PATH\"\n" "$BIN_DIR" >> "$SHELL_CONFIG"
-  step_done "Configure PATH" "added to ${SHELL_CONFIG/#$HOME/~}"
+if [[ "$SHELL" == *"bash"* ]]; then
+  SHELL_CONFIGS=("$HOME/.bash_profile" "$HOME/.bashrc")
+else
+  SHELL_CONFIGS=("$HOME/.zshenv")
+fi
+ADDED_TO=""
+for cfg in "${SHELL_CONFIGS[@]}"; do
+  [ -f "$cfg" ] || touch "$cfg"
+  if ! grep -q "$BIN_DIR" "$cfg" 2>/dev/null; then
+    printf "\n# Midium\nexport PATH=\"%s:\$PATH\"\n" "$BIN_DIR" >> "$cfg"
+    ADDED_TO="${ADDED_TO:+$ADDED_TO, }${cfg/#$HOME/~}"
+  fi
+done
+if [ -n "$ADDED_TO" ]; then
+  step_done "Configure PATH" "added to $ADDED_TO"
 else
   step_done "Configure PATH" "already configured"
 fi
@@ -251,13 +270,26 @@ if ! tar -tf "$TMP_TAR" >/dev/null 2>&1; then
   rm -f "$TMP_TAR"; exit 1
 fi
 
+if [ "$ENGINE_WAS_RUNNING" -eq 1 ]; then
+  if lsof -nP -iTCP:"$ENGINE_PORT" -sTCP:LISTEN -t >/dev/null 2>&1; then
+    if [ -x "$APP_DIR/$REAL_BINARY" ]; then
+      "$APP_DIR/$REAL_BINARY" stop >/dev/null 2>&1 || kill "$ENGINE_PID" 2>/dev/null || true
+    else
+      kill "$ENGINE_PID" 2>/dev/null || true
+    fi
+    for _ in $(seq 1 40); do
+      lsof -nP -iTCP:"$ENGINE_PORT" -sTCP:LISTEN -t >/dev/null 2>&1 || break
+      sleep 0.25
+    done
+  fi
+  step_done "Stop engine" "stopped the running engine (it restarts after the update)"
+fi
 for old in Midium Courier "Courier OS" Enclave; do
   if [ -f "$APP_DIR/$old" ]; then
-    pkill -x "$old" 2>/dev/null || true
+    pkill -f "^$APP_DIR/$old( |\$)" 2>/dev/null || true
     rm -f "$APP_DIR/$old"
   fi
 done
-# Old command names other than `courier` (kept below as an alias for `midium`).
 for old in enclave courier-os; do
   if [ -L "$BIN_DIR/$old" ] || [ -f "$BIN_DIR/$old" ]; then rm -f "$BIN_DIR/$old"; fi
 done
@@ -279,8 +311,7 @@ step_done "Verify" "signed for this Mac"
 # ── 6. finalize ───────────────────────────────────────────────────────────────
 [ -L "$BIN_DIR/$BINARY_NAME" ] && rm "$BIN_DIR/$BINARY_NAME"
 ln -sf "$APP_DIR/$REAL_BINARY" "$BIN_DIR/$BINARY_NAME"
-# Upgraded from Courier: `courier` keeps working as another name for `midium`.
-if [ "$LEGACY_INSTALL" -eq 1 ]; then
+if [ "$KEEP_COURIER_ALIAS" -eq 1 ]; then
   ln -sf "$APP_DIR/$REAL_BINARY" "$BIN_DIR/courier"
 fi
 chmod +x "$APP_DIR/$REAL_BINARY"
@@ -288,17 +319,35 @@ hash -r 2>/dev/null || true
 echo "$COURIER_VERSION" > "$COURIER_ROOT/VERSION"
 step_done "Finalize" "midium v$COURIER_VERSION ready"
 
+if [ "$ENGINE_WAS_RUNNING" -eq 1 ]; then
+  ( cd "$COURIER_ROOT" && "$APP_DIR/$REAL_BINARY" start --detach >/dev/null 2>&1 ) || true
+  UP=0
+  for _ in $(seq 1 120); do
+    if curl -fsS "http://127.0.0.1:$ENGINE_PORT/healthz" >/dev/null 2>&1; then UP=1; break; fi
+    sleep 1
+  done
+  if [ "$UP" -eq 1 ]; then
+    step_done "Restart engine" "running again on :$ENGINE_PORT"
+  else
+    step_fail "Restart engine" "didn't come back within 2 min — check: midium logs"
+  fi
+fi
+
 # ── done ──────────────────────────────────────────────────────────────────────
 printf '\n  %s%s✓ Midium installed.%s\n\n' "$BOLD" "$SUCCESS" "$NC"
 if [ "$LEGACY_INSTALL" -eq 1 ]; then
   printf '  %sCourier is now Midium. Your models, chats and settings moved to ~/Midium,\n  and `courier` still works as another name for `midium`.%s\n\n' "$MUTED" "$NC"
 fi
-printf '  %sRun:%s %s%s setup%s\n\n' "$MUTED" "$NC" "$BOLD" "$BINARY_NAME" "$NC"
+if [ "$ENGINE_WAS_RUNNING" -ne 1 ]; then
+  printf '  %sRun:%s %s%s setup%s\n\n' "$MUTED" "$NC" "$BOLD" "$BINARY_NAME" "$NC"
+fi
 [ "$TTY" -eq 1 ] && printf '%s%s' "$RESET" "$SHOW_CUR"
 
-# Open a fresh login shell so the new PATH is live right away, but only when a
-# person is at a terminal. Skipped for `ssh host 'curl … | bash'`, CI, etc.,
-# where there's no /dev/tty (the install itself has already finished).
-if [ -t 1 ] && { : </dev/tty; } 2>/dev/null; then
-  exec "${SHELL:-/bin/zsh}" -l </dev/tty
-fi
+case ":$ORIG_PATH:" in
+  *":$BIN_DIR:"*) ;;
+  *)
+    if [ -z "${MIDIUM_UPDATING:-}" ] && [ -t 1 ] && { : </dev/tty; } 2>/dev/null; then
+      exec "${SHELL:-/bin/zsh}" -l </dev/tty
+    fi
+    ;;
+esac
