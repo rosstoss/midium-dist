@@ -338,10 +338,36 @@ printf '\n  %s%s✓ Midium installed.%s\n\n' "$BOLD" "$SUCCESS" "$NC"
 if [ "$LEGACY_INSTALL" -eq 1 ]; then
   printf '  %sCourier is now Midium. Your models, chats and settings moved to ~/Midium,\n  and `courier` still works as another name for `midium`.%s\n\n' "$MUTED" "$NC"
 fi
-if [ "$ENGINE_WAS_RUNNING" -ne 1 ]; then
+if [ "$ENGINE_WAS_RUNNING" -ne 1 ] && [ "$LEGACY_INSTALL" -ne 1 ]; then
   printf '  %sRun:%s %s%s setup%s\n\n' "$MUTED" "$NC" "$BOLD" "$BINARY_NAME" "$NC"
 fi
 [ "$TTY" -eq 1 ] && printf '%s%s' "$RESET" "$SHOW_CUR"
+
+if [ "$LEGACY_INSTALL" -eq 1 ] && [ -f "$COURIER_ROOT/license.json" ] \
+   && grep -Eq '"(node_token|api_key)"[[:space:]]*:[[:space:]]*"[^"]' "$COURIER_ROOT/license.json" 2>/dev/null; then
+  printf '\n  %sYour Courier license carries over to Midium.%s It becomes your Midium Hub\n' "$BOLD" "$RESET"
+  printf '  license, and this Mac becomes your team'"'"'s Hub (it serves your models and shared vaults).\n\n'
+  CARRY_OVER=""
+  if [ -t 1 ] && { : </dev/tty; } 2>/dev/null; then
+    printf '  Set this Mac up as your Midium Hub now? [Y/n] '
+    read -r CARRY_OVER </dev/tty || CARRY_OVER="n"
+    case "$CARRY_OVER" in ""|[Yy]*) CARRY_OVER="y" ;; *) CARRY_OVER="n" ;; esac
+  fi
+  if [ "$CARRY_OVER" = "y" ]; then
+    printf '\n'
+    if ( cd "$COURIER_ROOT" && "$APP_DIR/$REAL_BINARY" hub activate ); then
+      ENGINE_WAS_RUNNING=1
+    else
+      printf '\n  You can try again any time:  %s%s hub activate%s\n' "$BOLD" "$BINARY_NAME" "$RESET"
+    fi
+  else
+    printf '  Whenever you'"'"'re ready, run:  %s%s hub activate%s\n' "$BOLD" "$BINARY_NAME" "$RESET"
+  fi
+  printf '\n'
+fi
+if [ "$LEGACY_INSTALL" -eq 1 ] && [ "$ENGINE_WAS_RUNNING" -ne 1 ]; then
+  printf '  Start Midium:  %s%s start --detach%s   (%s%s%s lists every command)\n\n' "$BOLD" "$BINARY_NAME" "$RESET" "$BOLD" "$BINARY_NAME" "$RESET"
+fi
 
 case ":$ORIG_PATH:" in
   *":$BIN_DIR:"*) ;;
