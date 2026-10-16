@@ -13,5 +13,10 @@ Public release channel for **Midium** - the local AI desktop app for Apple Silic
 
 Requires macOS on Apple Silicon (M-series).
 
-Each release is tagged `v<version>` and carries two assets: `Midium.dmg` (the app) and
-`midium-macos-arm64.tar.gz` (the engine, used by `install.sh` and `midium update`).
+Each release is tagged `v<version>` and carries:
+
+- `Midium.dmg`: the app, for first installs (and the in-app updater's fallback).
+- `midium-macos-arm64.tar.gz`: the engine, used by `install.sh` and `midium update`.
+- `Midium-<version>-arm64-mac.zip`, its `.zip.blockmap` and `latest-mac.yml`: the
+  in-app auto-update feed. The blockmap is what makes updates differential, so keep
+  it on every release.
