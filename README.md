@@ -11,7 +11,7 @@ Public release channel for **Midium** - the local AI desktop app for Apple Silic
 
   Then run `midium setup`.
 
-Requires macOS on Apple Silicon (M-series).
+Requires macOS 26.2 or later on Apple Silicon (M-series).
 
 Each release is tagged `v<version>` and carries:
 

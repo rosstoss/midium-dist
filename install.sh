@@ -181,11 +181,16 @@ if [ "$ARCH" != "arm64" ]; then
 fi
 
 MIN_MACOS_MAJOR=26
+MIN_MACOS_MINOR=2
 MACOS_VER="$(sw_vers -productVersion 2>/dev/null || echo "")"
 MACOS_MAJOR="${MACOS_VER%%.*}"
+MACOS_MINOR="${MACOS_VER#*.}"; MACOS_MINOR="${MACOS_MINOR%%.*}"
+[ "$MACOS_VER" = "$MACOS_MAJOR" ] && MACOS_MINOR=0
 case "$MACOS_MAJOR" in ""|*[!0-9]*) MACOS_MAJOR=0 ;; esac
-if [ "$MACOS_MAJOR" -lt "$MIN_MACOS_MAJOR" ]; then
-  step_fail "System check" "requires macOS ${MIN_MACOS_MAJOR}+ (Tahoe), but you're on ${MACOS_VER:-unknown}."
+case "$MACOS_MINOR" in ""|*[!0-9]*) MACOS_MINOR=0 ;; esac
+if [ "$MACOS_MAJOR" -lt "$MIN_MACOS_MAJOR" ] || \
+   { [ "$MACOS_MAJOR" -eq "$MIN_MACOS_MAJOR" ] && [ "$MACOS_MINOR" -lt "$MIN_MACOS_MINOR" ]; }; then
+  step_fail "System check" "requires macOS ${MIN_MACOS_MAJOR}.${MIN_MACOS_MINOR} or later, but you're on ${MACOS_VER:-unknown}."
   printf '  %sUpdate macOS via  System Settings → General → Software Update,  then re-run this installer.%s\n' "$MUTED" "$NC"
   exit 1
 fi
@@ -210,6 +215,7 @@ if { [ -d "$LEGACY_ROOT" ] && [ ! -L "$LEGACY_ROOT" ]; } \
 fi
 KEEP_COURIER_ALIAS=$LEGACY_INSTALL
 { [ -e "$BIN_DIR/courier" ] || [ -L "$BIN_DIR/courier" ]; } && KEEP_COURIER_ALIAS=1
+
 REMOVED_APPS=""
 for old in "Courier" "Courier OS" "Enclave"; do
   for dir in "/Applications" "$HOME/Applications"; do
@@ -238,6 +244,7 @@ if [ ! -e "$COURIER_ROOT" ] && [ -d "$LEGACY_ROOT" ] && [ ! -L "$LEGACY_ROOT" ];
 fi
 mkdir -p "$APP_DIR" "$BIN_DIR"
 export PATH="$BIN_DIR:$PATH"
+
 if [[ "$SHELL" == *"bash"* ]]; then
   SHELL_CONFIGS=("$HOME/.bash_profile" "$HOME/.bashrc")
 else
@@ -290,6 +297,7 @@ for old in Midium Courier "Courier OS" Enclave; do
     rm -f "$APP_DIR/$old"
   fi
 done
+
 for old in enclave courier-os; do
   if [ -L "$BIN_DIR/$old" ] || [ -f "$BIN_DIR/$old" ]; then rm -f "$BIN_DIR/$old"; fi
 done
@@ -311,6 +319,7 @@ step_done "Verify" "signed for this Mac"
 # ── 6. finalize ───────────────────────────────────────────────────────────────
 [ -L "$BIN_DIR/$BINARY_NAME" ] && rm "$BIN_DIR/$BINARY_NAME"
 ln -sf "$APP_DIR/$REAL_BINARY" "$BIN_DIR/$BINARY_NAME"
+
 if [ "$KEEP_COURIER_ALIAS" -eq 1 ]; then
   ln -sf "$APP_DIR/$REAL_BINARY" "$BIN_DIR/courier"
 fi
