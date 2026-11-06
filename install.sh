@@ -85,7 +85,46 @@ human() {  # $1 bytes -> human size
 step_done() { printf '\r  %s[✓]%s %-*s %s%s%s%s\n' "$SUCCESS" "$NC" "$LABEL_W" "$1" "$DIM" "${2:-}" "$NC" "$CLR"; }
 step_fail() { printf '\r  %s[✗]%s %-*s %s%s%s%s\n' "$ERRC" "$NC" "$LABEL_W" "$1" "$ERRC" "${2:-}" "$NC" "$CLR"; }
 
-# Download $1 -> $2 with a live progress bar (%, size, speed, ETA).
+pick() {
+  local title=$1 cur=$2 key rest i n lines tty=${PICK_TTY:-/dev/tty}
+  shift 2
+  local opts=("$@")
+  n=${#opts[@]}
+  lines=$(( n + 3 ))
+  PICKED=-1
+  exec 9<"$tty" || return 0  # opened once: reopening a file per key would restart it
+  printf '%s' "$HIDE_CUR"
+  while :; do
+    printf '\033[1;33m%s\033[0m\n\033[2m↑↓ navigate  ENTER/SPACE select  ESC cancel\033[0m\n\n' "$title"
+    for (( i=0; i<n; i++ )); do
+      if [ "$i" -eq "$cur" ]; then
+        printf '\033[1;32m(●) %s\033[0m\n' "${opts[i]}"
+      else
+        printf '(○) %s\n' "${opts[i]}"
+      fi
+    done
+    IFS= read -rsn1 -u 9 key || break
+    case "$key" in
+      ""|" ") PICKED=$cur; break ;;
+      $'\x1b')
+        rest=""
+        IFS= read -rsn2 -t 1 -u 9 rest || true
+        case "$rest" in
+          "[A"|"OA") cur=$(( (cur + n - 1) % n )) ;;
+          "[B"|"OB") cur=$(( (cur + 1) % n )) ;;
+          "") break ;;
+        esac ;;
+      k|K) cur=$(( (cur + n - 1) % n )) ;;
+      j|J) cur=$(( (cur + 1) % n )) ;;
+      q|Q|$'\x03'|$'\x04') break ;;
+      [1-9]) [ "$key" -le "$n" ] && cur=$(( key - 1 )) ;;
+    esac
+    printf '\033[%dA\033[J' "$lines"
+  done
+  exec 9<&-
+  printf '%s' "$SHOW_CUR"
+}
+
 download() {
   local url=$1 out=$2 total cur=0 start elapsed speed eta pct tick=0
   total=$(curl -fsIL "$url" 2>/dev/null \
@@ -221,7 +260,6 @@ for old in "Courier" "Courier OS" "Enclave"; do
   for dir in "/Applications" "$HOME/Applications"; do
     bundle="$dir/$old.app"
     [ -d "$bundle" ] || continue
-    # Only ask a RUNNING app to quit — `tell application` launches one that isn't.
     if pgrep -x "$old" >/dev/null 2>&1; then
       osascript -e "tell application \"$old\" to quit" >/dev/null 2>&1 || true
       sleep 1
@@ -358,9 +396,8 @@ if [ "$LEGACY_INSTALL" -eq 1 ] && [ -f "$COURIER_ROOT/license.json" ] \
   printf '  license, and this Mac becomes your team'"'"'s Hub (it serves your models and shared vaults).\n\n'
   CARRY_OVER=""
   if [ -t 1 ] && { : </dev/tty; } 2>/dev/null; then
-    printf '  Set this Mac up as your Midium Hub now? [Y/n] '
-    read -r CARRY_OVER </dev/tty || CARRY_OVER="n"
-    case "$CARRY_OVER" in ""|[Yy]*) CARRY_OVER="y" ;; *) CARRY_OVER="n" ;; esac
+    pick "Set this Mac up as your Midium Hub now?" 0 "Yes" "No"
+    [ "$PICKED" -eq 0 ] && CARRY_OVER="y" || CARRY_OVER="n"
   fi
   if [ "$CARRY_OVER" = "y" ]; then
     printf '\n'
